@@ -1,18 +1,21 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
-using Octokit;
 
 namespace src
 {
     public class GetPulse
     {
         private readonly ILogger _logger;
+        private static readonly HttpClient ghClient = new HttpClient();
+
 
         public GetPulse(ILoggerFactory loggerFactory)
         {
@@ -20,26 +23,36 @@ namespace src
         }
 
         [Function("GetPulse")]
-        public HttpResponseData Run([HttpTrigger(AuthorizationLevel.Function, "get", "post")] HttpRequestData req)
+        public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = "getPulse/{onwer:alpha}/{project:alpha}")] HttpRequestData req, string onwer, string project)
         {
             _logger.LogInformation("C# HTTP trigger function processed a request.");
 
-            var ghClient = new GitHubClient(new ProductHeaderValue("powertoys"));
+            ghClient.DefaultRequestHeaders.Accept.Clear();
+            ghClient.DefaultRequestHeaders.Accept.Add(
+                        new MediaTypeWithQualityHeaderValue("application/vnd.github.v3+json"));
+            ghClient.DefaultRequestHeaders.Add("User-Agent", ".NET Foundation Repository Reporter");
 
-            var recently = new RepositoryIssueRequest{
-                    Filter = IssueFilter.All,
-                    State = ItemStateFilter.All,
-                    Since = DateTimeOffset.Now.Subtract(TimeSpan.FromDays(7))
-                };
-            var issues = ghClient.Issue.GetAllForRepository("microsoft", "powertoys", recently).Result;
-            
 
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            response.Headers.Add("Content-Type", "text/plain; charset=utf-8");
-            //response.Headers.Add("Content-Type", "application/json");
-            //response.Body.Write(issues);
+            var stringTask = ghClient.GetStreamAsync($"https://api.github.com/repos/{onwer}/{project}/stats/participation");
+
+            var participations = JsonSerializer.Deserialize<Participations>(await stringTask);
+            _logger.LogInformation("--- participations");
+
+            var response = req.CreateResponse();
+            response.Headers.Add("Content-Type", "application/json");
+
+            _logger.LogInformation("--- Last call");
+            await response.WriteAsJsonAsync<Participations>(participations,HttpStatusCode.OK) ;
             
+            _logger.LogInformation("--- returning");
             return response;
+
         }
+    }
+
+    public class Participations
+    {
+        public List<int> all { get; set; }
+        public List<int> owner { get; set; }
     }
 }
